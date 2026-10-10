@@ -982,14 +982,19 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="mx-auto flex h-44 w-44 items-center justify-center rounded-full border border-white/15 bg-white/5">
-                <div className="flex h-32 w-32 items-center justify-center rounded-full border border-white/20 bg-white/10">
-                  <div
-                    className={`flex h-24 w-24 items-center justify-center rounded-full bg-emerald-800 shadow-inner ${
-                      isListening ? "animate-pulse" : ""
-                    }`}
-                  >
-                    <Bot size={48} strokeWidth={1.4} />
+              <div
+                className="aura-assistant-orb mx-auto flex h-44 w-44 items-center justify-center rounded-full border border-white/15 bg-white/5"
+                data-active={isListening || isSpeaking}
+                data-speaking={isSpeaking}
+                aria-hidden="true"
+              >
+                <div className="aura-assistant-orb__middle flex h-32 w-32 items-center justify-center rounded-full border border-white/20 bg-white/10">
+                  <div className="aura-assistant-orb__core flex h-24 w-24 items-center justify-center rounded-full bg-emerald-800 shadow-inner">
+                    <Bot
+                      className="aura-assistant-orb__icon"
+                      size={48}
+                      strokeWidth={1.4}
+                    />
                   </div>
                 </div>
               </div>
