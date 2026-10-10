@@ -1,13 +1,13 @@
-
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Bot,
   CheckCircle2,
   Clock,
   Headphones,
+  LoaderCircle,
   Mic,
   MicOff,
   Package,
@@ -15,909 +15,969 @@ import {
   PhoneOff,
   Send,
   ShieldCheck,
-  ShoppingBag,
   Sparkles,
   Truck,
-  User,
   Volume2,
-  LoaderCircle,
-  AlertCircle,
-  RotateCcw,
+  VolumeX,
 } from "lucide-react";
 
-const ORDERS = [
+const TEST_ORDERS = [
   {
     id: "ORD-101",
     customer: "Priya Sharma",
     product: "Vitamin C Serum (30ml)",
-    amount: 699,
+    amount: "₹699",
     status: "Out for Delivery",
-    courier: "BlueDart",
-    tracking: "BD-982103",
+    tracking: "BlueDart BD-982103",
     delivery: "Expected by 6 PM today",
+    color: "amber",
   },
   {
     id: "ORD-102",
     customer: "Rahul Verma",
     product: "Hydrating Sunscreen SPF 50",
-    amount: 499,
+    amount: "₹499",
     status: "Delivered",
-    courier: "Delhivery",
-    tracking: "DL-441029",
+    tracking: "Delhivery DL-441029",
     delivery: "Delivered 14 days ago",
+    color: "emerald",
   },
   {
     id: "ORD-103",
     customer: "Ananya Patel",
     product: "Green Tea Face Wash + Toner",
-    amount: 850,
+    amount: "₹850",
     status: "Processing",
-    courier: "Not dispatched yet",
-    tracking: "Not available",
+    tracking: "Not dispatched yet",
     delivery: "Ordered 3 hours ago",
+    color: "blue",
   },
 ];
 
 const POLICIES = [
   {
-    title: "Shipping",
-    description:
-      "Free above ₹499. Orders below ₹499 have a ₹50 shipping fee. Delivery takes 3–5 business days.",
     icon: Truck,
+    title: "Shipping",
+    description: "Free above ₹499. Otherwise, ₹50. Delivery in 3–5 business days.",
   },
   {
+    icon: Package,
     title: "Returns",
     description:
-      "Returns within 7 days of delivery for unopened, unused products in original packaging.",
-    icon: RotateCcw,
+      "Within 7 days of delivery for unopened, unused products in original packaging.",
   },
   {
-    title: "Damaged products",
-    description:
-      "Report damaged or defective products within 48 hours of delivery, with photos, for replacement.",
     icon: ShieldCheck,
+    title: "Damaged items",
+    description:
+      "Report within 48 hours of delivery. Photos are required for replacement requests.",
   },
   {
+    icon: Clock,
     title: "Cancellation",
     description:
-      "Orders can be cancelled only while Processing. Shipped and Out for Delivery orders cannot be cancelled.",
-    icon: Package,
-  },
-  {
-    title: "Cash on Delivery",
-    description:
-      "COD is available for orders up to ₹2,500. Pay by cash or UPI at the doorstep.",
-    icon: ShoppingBag,
+      "Only Processing orders can be cancelled. Shipped orders cannot be cancelled.",
   },
 ];
 
-const INITIAL_GREETING = {
-  role: "assistant",
-  text: "Hi! Welcome to Aura Skincare. I'm Aria, your virtual support assistant. How can I help you today?",
-};
-
-function StatusBadge({ status }) {
-  const styles = {
-    Idle: "bg-slate-100 text-slate-600",
-    Listening: "bg-emerald-50 text-emerald-700",
-    Thinking: "bg-amber-50 text-amber-700",
-    Speaking: "bg-sky-50 text-sky-700",
-  };
-
-  return (
-    <span
-      className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${
-        styles[status] || styles.Idle
-      }`}
-    >
-      <span
-        className={`h-2 w-2 rounded-full ${
-          status === "Listening"
-            ? "animate-pulse bg-emerald-500"
-            : status === "Thinking"
-              ? "animate-pulse bg-amber-500"
-              : status === "Speaking"
-                ? "bg-sky-500"
-                : "bg-slate-400"
-        }`}
-      />
-      {status}
-    </span>
-  );
+function cleanTextForSpeech(text) {
+  return String(text ?? "")
+    // Turn escaped Markdown markers into normal characters first.
+    // Example: \*\*ORD-101\*\* becomes **ORD-101**
+    .replace(/\\([*_~`#])/g, "$1")
+    // Remove Markdown emphasis, headings, inline code and strike-through markers.
+    .replace(/[*_~`#]{1,}/g, " ")
+    // Remove Markdown links but preserve their readable labels.
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    // Avoid reading raw URLs aloud.
+    .replace(/https?:\/\/\S+/gi, " ")
+    // Remove emoji and associated variation/joiner characters.
+    .replace(/\p{Extended_Pictographic}/gu, " ")
+    .replace(/[\uFE0E\uFE0F\u200D]/g, "")
+    // Remove common Markdown quote and list prefixes.
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/^\s*[-+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    // Clean up leftover punctuation and whitespace.
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function SectionHeading({ icon: Icon, title, subtitle }) {
-  return (
-    <div className="mb-4 flex items-center gap-3">
-      <div className="rounded-xl bg-emerald-50 p-2.5 text-emerald-700">
-        <Icon size={20} />
-      </div>
-      <div>
-        <h2 className="font-semibold text-slate-900">{title}</h2>
-        {subtitle && (
-          <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
-        )}
-      </div>
-    </div>
-  );
+function getStatusClasses(status) {
+  if (status === "Delivered") {
+    return "bg-emerald-50 text-emerald-700 ring-emerald-200";
+  }
+
+  if (status === "Out for Delivery") {
+    return "bg-amber-50 text-amber-700 ring-amber-200";
+  }
+
+  return "bg-blue-50 text-blue-700 ring-blue-200";
 }
 
 export default function Home() {
   const [callActive, setCallActive] = useState(false);
-  const [status, setStatus] = useState("Idle");
+  const [status, setStatus] = useState("Ready to help");
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const [transcriptText, setTranscriptText] = useState("");
   const [recordingError, setRecordingError] = useState("");
-  const [conversation, setConversation] = useState([INITIAL_GREETING]);
+  const [conversation, setConversation] = useState([]);
   const [manualMessage, setManualMessage] = useState("");
+  const [speechEnabled, setSpeechEnabled] = useState(true);
+  const [currentYear, setCurrentYear] = useState(null);
 
   const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
-  const chunksRef = useRef([]);
-  const recordingSessionRef = useRef(0);
   const conversationEndRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  function releaseMicrophone() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
+  useEffect(() => {
+    mountedRef.current = true;
+    setCurrentYear(new Date().getFullYear());
+
+    return () => {
+      mountedRef.current = false;
+
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    conversationEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "end",
+    });
+  }, [conversation]);
+
+  const speakResponse = useCallback(
+    (text) => {
+      if (!speechEnabled || typeof window === "undefined") return;
+
+      if (!("speechSynthesis" in window)) {
+        setRecordingError(
+          "Speech playback is not supported by this browser. You can still read Aria's replies."
+        );
+        return;
+      }
+
+      // Always pass cleaned text to the speech engine.
+      const speechText = cleanTextForSpeech(text).slice(0, 1200);
+
+      if (!speechText) return;
+
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(speechText);
+      utterance.lang = "en-IN";
+      utterance.rate = 0.95;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+
+      const voices = window.speechSynthesis.getVoices();
+      const indianEnglishVoice = voices.find(
+        (voice) =>
+          voice.lang?.toLowerCase() === "en-in" &&
+          /female|heera|priya|neerja|india/i.test(voice.name)
+      );
+
+      const anyIndianEnglishVoice = voices.find((voice) =>
+        voice.lang?.toLowerCase().startsWith("en-in")
+      );
+
+      const EnglishVoice = voices.find((voice) =>
+        voice.lang?.toLowerCase().startsWith("en-")
+      );
+
+      utterance.voice =
+        indianEnglishVoice || anyIndianEnglishVoice || EnglishVoice || null;
+
+      utterance.onstart = () => {
+        if (!mountedRef.current) return;
+        setIsSpeaking(true);
+        setStatus("Speaking");
+      };
+
+      utterance.onend = () => {
+        if (!mountedRef.current) return;
+        setIsSpeaking(false);
+        setStatus(callActive ? "Listening" : "Ready to help");
+      };
+
+      utterance.onerror = () => {
+        if (!mountedRef.current) return;
+        setIsSpeaking(false);
+        setStatus(callActive ? "Listening" : "Ready to help");
+      };
+
+      window.speechSynthesis.speak(utterance);
+    },
+    [speechEnabled, callActive]
+  );
+
+  const stopSpeech = useCallback(() => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
     }
-  }
 
-  function startCall() {
+    setIsSpeaking(false);
+    setStatus(callActive ? "Listening" : "Ready to help");
+  }, [callActive]);
+
+  const sendMessageToAria = useCallback(
+    async (rawMessage) => {
+      const message = String(rawMessage ?? "").trim();
+
+      if (!message || isSending) return;
+
+      setRecordingError("");
+      setManualMessage("");
+      setIsSending(true);
+      setStatus("Thinking");
+
+      setConversation((previous) => [
+        ...previous,
+        {
+          id: `${Date.now()}-user`,
+          role: "user",
+          text: message,
+          time: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+        },
+      ]);
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ message }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data?.error || "Aria could not respond. Please try again."
+          );
+        }
+
+        const reply =
+          typeof data.reply === "string" ? data.reply.trim() : "";
+
+        if (!reply) {
+          throw new Error("Aria returned an empty response.");
+        }
+
+        setConversation((previous) => [
+          ...previous,
+          {
+            id: `${Date.now()}-assistant`,
+            role: "assistant",
+            text: reply,
+            time: new Date().toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+          },
+        ]);
+
+        speakResponse(reply);
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "Something went wrong. Please try again.";
+
+        setRecordingError(errorMessage);
+        setStatus(callActive ? "Listening" : "Ready to help");
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [isSending, speakResponse, callActive]
+  );
+
+  const startCall = useCallback(() => {
     setCallActive(true);
-    setStatus("Idle");
+    setStatus("Listening");
     setRecordingError("");
-  }
+    setConversation((previous) => [
+      ...previous,
+      {
+        id: `${Date.now()}-welcome`,
+        role: "assistant",
+        text: "Hello! Welcome to Aura Skincare. I'm Aria, your virtual support assistant. How can I help you today?",
+        time: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      },
+    ]);
 
-  function endCall() {
-    setCallActive(false);
-    setStatus("Idle");
-    recordingSessionRef.current += 1;
+    speakResponse(
+      "Hello! Welcome to Aura Skincare. I'm Aria, your virtual support assistant. How can I help you today?"
+    );
+  }, [speakResponse]);
 
+  const endCall = useCallback(() => {
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
     }
 
-    releaseMicrophone();
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+
+    stopSpeech();
+    setCallActive(false);
     setIsRecording(false);
-  }
+    setIsTranscribing(false);
+    setStatus("Call ended");
+    setRecordingError("");
+  }, [stopSpeech]);
 
-  async function sendMessageToAria(message) {
-    const cleanMessage = message.trim();
-
-    if (!cleanMessage) return;
-
-    setConversation((previous) => [
-      ...previous,
-      { role: "user", text: cleanMessage },
-    ]);
-
-    setIsSending(true);
-    setStatus("Thinking");
+  const startRecording = useCallback(async () => {
     setRecordingError("");
 
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ message: cleanMessage }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Aria could not respond.");
-      }
-
-      if (!data.reply) {
-        throw new Error("Aria returned an empty response.");
-      }
-
-      setConversation((previous) => [
-        ...previous,
-        { role: "assistant", text: data.reply },
-      ]);
-
-      setStatus("Idle");
-    } catch (error) {
-      setRecordingError(
-        error.message || "Unable to contact Aria. Please try again."
-      );
-      setStatus("Idle");
-    } finally {
-      setIsSending(false);
+    if (!callActive) {
+      setRecordingError("Start the call before using the microphone.");
+      return;
     }
-  }
 
-  async function startRecording() {
-    if (isRecording || isTranscribing || isSending) return;
-
-    if (
-      typeof navigator === "undefined" ||
-      !navigator.mediaDevices?.getUserMedia
-    ) {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       setRecordingError(
-        "Your browser does not support microphone recording. Use a supported browser on localhost or HTTPS."
+        "Microphone recording is not supported in this browser. Try a recent version of Chrome."
       );
       return;
     }
 
-    setRecordingError("");
-    setTranscriptText("");
-    chunksRef.current = [];
-
-    const sessionId = ++recordingSessionRef.current;
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: true,
       });
 
-      if (sessionId !== recordingSessionRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-
       streamRef.current = stream;
+      audioChunksRef.current = [];
 
-      let options = {};
+      const preferredMimeType = MediaRecorder.isTypeSupported(
+        "audio/webm;codecs=opus"
+      )
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "";
 
-      if (typeof MediaRecorder !== "undefined") {
-        if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
-          options.mimeType = "audio/webm;codecs=opus";
-        } else if (MediaRecorder.isTypeSupported("audio/webm")) {
-          options.mimeType = "audio/webm";
-        } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
-          options.mimeType = "audio/mp4";
-        }
-      }
+      const recorder = preferredMimeType
+        ? new MediaRecorder(stream, { mimeType: preferredMimeType })
+        : new MediaRecorder(stream);
 
-      const recorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          chunksRef.current.push(event.data);
+        if (event.data?.size > 0) {
+          audioChunksRef.current.push(event.data);
         }
       };
 
       recorder.onerror = () => {
-        setRecordingError("Recording failed. Please try again.");
+        setRecordingError("There was a problem recording your voice.");
         setIsRecording(false);
-        setStatus("Idle");
-        releaseMicrophone();
+        setStatus("Listening");
       };
 
       recorder.onstop = async () => {
-        releaseMicrophone();
+        stream.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
 
-        if (sessionId !== recordingSessionRef.current) return;
-
-        const audioBlob = new Blob(chunksRef.current, {
+        const audioBlob = new Blob(audioChunksRef.current, {
           type: recorder.mimeType || "audio/webm",
         });
 
-        setIsRecording(false);
+        audioChunksRef.current = [];
 
         if (!audioBlob.size) {
-          setStatus("Idle");
-          setRecordingError("No audio was recorded. Please try again.");
+          setIsRecording(false);
+          setStatus("Listening");
           return;
         }
 
-        await transcribeRecording(audioBlob, sessionId);
+        setIsRecording(false);
+        setIsTranscribing(true);
+        setStatus("Transcribing");
+
+        try {
+          const formData = new FormData();
+          formData.append("audio", audioBlob, "recording.webm");
+
+          const response = await fetch("/api/transcribe", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data?.error || "We couldn't transcribe your recording."
+            );
+          }
+
+          const transcribedText =
+            typeof data.text === "string" ? data.text.trim() : "";
+
+          if (!transcribedText) {
+            throw new Error(
+              "No speech was detected. Please try speaking a little louder."
+            );
+          }
+
+          setTranscriptText(transcribedText);
+          setIsTranscribing(false);
+          setStatus("Listening");
+
+          await sendMessageToAria(transcribedText);
+        } catch (error) {
+          setIsTranscribing(false);
+          setStatus("Listening");
+          setRecordingError(
+            error instanceof Error
+              ? error.message
+              : "Transcription failed. Please try again."
+          );
+        }
       };
 
       recorder.start();
       setIsRecording(true);
       setStatus("Listening");
     } catch (error) {
-      releaseMicrophone();
       setIsRecording(false);
-      setStatus("Idle");
-
-      if (error.name === "NotAllowedError") {
-        setRecordingError(
-          "Microphone access was denied. Allow microphone access in your browser settings."
-        );
-      } else {
-        setRecordingError(
-          error.message || "Could not start recording."
-        );
-      }
+      setStatus("Listening");
+      setRecordingError(
+        error instanceof Error && error.name === "NotAllowedError"
+          ? "Microphone access was denied. Allow microphone permission in your browser settings."
+          : "Unable to access the microphone. Check that it is connected and try again."
+      );
     }
-  }
+  }, [callActive, sendMessageToAria]);
 
-  async function transcribeRecording(audioBlob, sessionId) {
-    setIsTranscribing(true);
-    setStatus("Thinking");
-
-    try {
-      const formData = new FormData();
-
-      const extension = audioBlob.type.includes("mp4")
-        ? "m4a"
-        : "webm";
-
-      formData.append("audio", audioBlob, `recording.${extension}`);
-
-      const response = await fetch("/api/transcribe", {
-        method: "POST",
-        body: formData,
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.error || "Could not transcribe your recording."
-        );
-      }
-
-      if (sessionId !== recordingSessionRef.current) return;
-
-      const recognisedText = data.text?.trim();
-
-      if (!recognisedText) {
-        throw new Error(
-          "No speech was detected. Please speak clearly and try again."
-        );
-      }
-
-      setTranscriptText(recognisedText);
-
-      // Send the recognised speech to Aria.
-      await sendMessageToAria(recognisedText);
-    } catch (error) {
-      if (sessionId === recordingSessionRef.current) {
-        setRecordingError(
-          error.message || "Speech processing failed. Please try again."
-        );
-        setStatus("Idle");
-      }
-    } finally {
-      setIsTranscribing(false);
-      if (sessionId === recordingSessionRef.current) {
-        setStatus("Idle");
-      }
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+      setStatus("Transcribing");
     }
-  }
+  }, []);
 
-  function stopRecording() {
-    const recorder = mediaRecorderRef.current;
-
-    if (recorder?.state === "recording") {
-      recorder.stop();
-    }
-
-    setIsRecording(false);
-  }
-
-  async function handleManualSubmit(event) {
+  const handleManualSubmit = (event) => {
     event.preventDefault();
+    sendMessageToAria(manualMessage);
+  };
 
-    const message = manualMessage.trim();
+  const downloadTranscript = () => {
+    const transcript = {
+      brand: "Aura Skincare",
+      assistant: "Aria",
+      createdAt: new Date().toISOString(),
+      callStatus: callActive ? "active" : "ended",
+      messages: conversation.map((message) => ({
+        role: message.role,
+        text: message.text,
+        time: message.time,
+      })),
+      structuredSummary: {
+        customerIssue: "",
+        orderId: "",
+        resolution: "",
+        followUpRequired: false,
+      },
+    };
 
-    if (!message || isSending || isTranscribing) return;
+    const blob = new Blob([JSON.stringify(transcript, null, 2)], {
+      type: "application/json",
+    });
 
-    setManualMessage("");
-    await sendMessageToAria(message);
-  }
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `aura-call-transcript-${Date.now()}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
-  function resetConversation() {
-    if (isRecording) {
-      stopRecording();
-    }
-
-    setConversation([INITIAL_GREETING]);
-    setTranscriptText("");
-    setRecordingError("");
-    setStatus("Idle");
-  }
-
-  const busy = isSending || isTranscribing;
+  const statusLabel = isRecording
+    ? "Listening to you"
+    : isTranscribing
+      ? "Transcribing audio"
+      : isSending
+        ? "Thinking"
+        : isSpeaking
+          ? "Speaking"
+          : status;
 
   return (
-    <main className="min-h-screen bg-[#f7faf8] text-slate-800">
-      {/* Header */}
-      <header className="border-b border-slate-200 bg-white">
+    <main className="min-h-screen bg-[#f7f8f5] text-slate-900">
+      <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-700 text-white">
-              <Sparkles size={23} />
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-950 text-white">
+              <Sparkles size={22} />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight text-slate-900">
+              <h1 className="text-lg font-bold tracking-tight">
                 Aura Skincare
               </h1>
               <p className="text-xs text-slate-500">
-                AI Customer Support
+                AI Voice Customer Support
               </p>
             </div>
           </div>
 
-          <div className="hidden items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 sm:flex">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Voice agent dashboard
+          <div className="flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
+            Aria is ready
           </div>
         </div>
       </header>
 
-      <div className="mx-auto max-w-7xl px-4 py-7 sm:px-6 lg:px-8">
-        {/* Page introduction */}
-        <div className="mb-7">
-          <p className="mb-2 text-sm font-semibold text-emerald-700">
-            CUSTOMER EXPERIENCE
-          </p>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-            Meet Aria, your AI support agent
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
-            Help customers with orders, shipping, returns and product
-            support through a simple voice-enabled interface.
-          </p>
-        </div>
-
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.65fr)_minmax(300px,0.85fr)]">
-          {/* Main column */}
-          <div className="space-y-6">
-            {/* Agent card */}
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <div className="bg-gradient-to-br from-emerald-800 to-emerald-600 p-6 text-white sm:p-8">
-                <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/20 bg-white/15">
-                      <Bot size={34} />
-                    </div>
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-xl font-bold">Aria</h3>
-                        <span className="rounded-full bg-white/15 px-2.5 py-1 text-[11px] font-medium">
-                          AI Assistant
-                        </span>
-                      </div>
-                      <p className="mt-1 text-sm text-emerald-50">
-                        Friendly, concise customer support
-                      </p>
-                      <div className="mt-3">
-                        <StatusBadge status={status} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {!callActive ? (
-                      <button
-                        onClick={startCall}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-emerald-800 transition hover:bg-emerald-50"
-                      >
-                        <Phone size={17} />
-                        Start Call
-                      </button>
-                    ) : (
-                      <button
-                        onClick={endCall}
-                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-500 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-600"
-                      >
-                        <PhoneOff size={17} />
-                        End Call
-                      </button>
-                    )}
-                  </div>
+      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(0,1fr)_360px] lg:px-8">
+        <section className="space-y-6">
+          <div className="overflow-hidden rounded-3xl bg-emerald-950 text-white shadow-sm">
+            <div className="grid gap-6 p-6 sm:p-8 md:grid-cols-[1fr_220px] md:items-center">
+              <div>
+                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-emerald-100">
+                  <Activity size={14} />
+                  Voice-powered customer care
                 </div>
 
-                <div className="mt-7 grid grid-cols-3 gap-3 border-t border-white/15 pt-5">
-                  <div>
-                    <p className="text-xs text-emerald-100">Language</p>
-                    <p className="mt-1 text-sm font-semibold">English</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-emerald-100">Interaction</p>
-                    <p className="mt-1 text-sm font-semibold">Voice + Text</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-emerald-100">AI provider</p>
-                    <p className="mt-1 text-sm font-semibold">Groq</p>
-                  </div>
-                </div>
-              </div>
+                <h2 className="max-w-xl text-3xl font-semibold tracking-tight sm:text-4xl">
+                  Meet Aria, your personal support assistant.
+                </h2>
 
-              {/* Conversation */}
-              <div className="p-5 sm:p-6">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <SectionHeading
-                    icon={Headphones}
-                    title="Conversation"
-                    subtitle="Customer messages and Aria's replies"
-                  />
+                <p className="mt-3 max-w-xl text-sm leading-6 text-emerald-100/80 sm:text-base">
+                  Ask about orders, shipping, returns, cancellations, and
+                  payment options. Aria uses the available order records and
+                  Aura Skincare policies to help you.
+                </p>
 
-                  <button
-                    onClick={resetConversation}
-                    className="mb-4 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-                    title="Reset conversation"
-                  >
-                    <RotateCcw size={14} />
-                    Reset
-                  </button>
-                </div>
-
-                <div
-                  className="max-h-[440px] min-h-[220px] space-y-4 overflow-y-auto rounded-xl bg-slate-50 p-4"
-                  aria-live="polite"
-                >
-                  {conversation.map((message, index) => {
-                    const isAssistant = message.role === "assistant";
-
-                    return (
-                      <div
-                        key={`${index}-${message.role}`}
-                        className={`flex items-start gap-2.5 ${
-                          isAssistant ? "" : "flex-row-reverse"
-                        }`}
-                      >
-                        <div
-                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-                            isAssistant
-                              ? "bg-emerald-100 text-emerald-800"
-                              : "bg-sky-100 text-sky-800"
-                          }`}
-                        >
-                          {isAssistant ? (
-                            <Bot size={18} />
-                          ) : (
-                            <User size={18} />
-                          )}
-                        </div>
-
-                        <div
-                          className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-6 ${
-                            isAssistant
-                              ? "rounded-tl-sm border border-slate-200 bg-white text-slate-700"
-                              : "rounded-tr-sm bg-emerald-700 text-white"
-                          }`}
-                        >
-                          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide opacity-70">
-                            {isAssistant ? "Aria" : "You"}
-                          </p>
-                          <p className="whitespace-pre-wrap">
-                            {message.text}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {isSending && (
-                    <div className="flex items-center gap-2 text-sm text-slate-500">
-                      <LoaderCircle
-                        size={17}
-                        className="animate-spin text-emerald-700"
-                      />
-                      Aria is thinking...
-                    </div>
-                  )}
-
-                  <div ref={conversationEndRef} />
-                </div>
-
-                {/* Text input */}
-                <form
-                  onSubmit={handleManualSubmit}
-                  className="mt-4 flex gap-2"
-                >
-                  <input
-                    value={manualMessage}
-                    onChange={(event) =>
-                      setManualMessage(event.target.value)
-                    }
-                    disabled={busy}
-                    maxLength={2000}
-                    placeholder="Type a message to Aria..."
-                    className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-100"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!manualMessage.trim() || busy}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <Send size={17} />
-                    <span className="hidden sm:inline">Send</span>
-                  </button>
-                </form>
-              </div>
-            </section>
-
-            {/* Speech-to-text */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <SectionHeading
-                icon={Mic}
-                title="Speech-to-Text Test"
-                subtitle="Record your voice and send your question to Aria"
-              />
-
-              <div className="flex flex-col gap-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-5 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`flex h-12 w-12 items-center justify-center rounded-full ${
-                      isRecording
-                        ? "animate-pulse bg-red-100 text-red-600"
-                        : "bg-emerald-100 text-emerald-700"
-                    }`}
-                  >
-                    {isRecording ? (
-                      <MicOff size={23} />
-                    ) : (
-                      <Mic size={23} />
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800">
-                      {isRecording
-                        ? "Recording your voice..."
-                        : isTranscribing
-                          ? "Transcribing your recording..."
-                          : isSending
-                            ? "Waiting for Aria's response..."
-                            : "Ready to record"}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Speak clearly, then stop the recording.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex gap-2">
-                  {!isRecording ? (
+                <div className="mt-6 flex flex-wrap gap-3">
+                  {!callActive ? (
                     <button
-                      onClick={startRecording}
-                      disabled={busy}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={startCall}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-5 py-3 text-sm font-semibold text-emerald-950 transition hover:bg-emerald-50"
                     >
-                      <Mic size={17} />
-                      Record
+                      <Phone size={17} />
+                      Start Call
                     </button>
                   ) : (
                     <button
-                      onClick={stopRecording}
-                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700"
+                      onClick={endCall}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-rose-500 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-600"
                     >
-                      <span className="h-2.5 w-2.5 rounded-sm bg-white" />
-                      Stop Recording
+                      <PhoneOff size={17} />
+                      End Call
                     </button>
                   )}
-                </div>
-              </div>
 
-              {busy && (
-                <div className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
-                  <LoaderCircle size={17} className="animate-spin" />
-                  {isTranscribing
-                    ? "Converting your voice to text..."
-                    : "Aria is preparing a response..."}
-                </div>
-              )}
-
-              {recordingError && (
-                <div
-                  role="alert"
-                  className="mt-4 flex items-start gap-2 rounded-xl border border-red-100 bg-red-50 p-3 text-sm text-red-700"
-                >
-                  <AlertCircle size={18} className="mt-0.5 shrink-0" />
-                  <p>{recordingError}</p>
-                </div>
-              )}
-
-              {transcriptText && (
-                <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/70 p-4">
-                  <p className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-emerald-800">
-                    <CheckCircle2 size={16} />
-                    Recognised speech
-                  </p>
-                  <p className="text-sm leading-6 text-slate-700">
-                    {transcriptText}
-                  </p>
-                </div>
-              )}
-            </section>
-
-            {/* Development progress */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-              <SectionHeading
-                icon={Activity}
-                title="Development Progress"
-                subtitle="Core application components"
-              />
-
-              <div className="space-y-3">
-                {[
-                  "Groq API connection",
-                  "Speech-to-text transcription",
-                  "AI customer support responses",
-                  "Conversation transcript display",
-                  "Mock order reference data",
-                ].map((item) => (
-                  <div
-                    key={item}
-                    className="flex items-center gap-3 text-sm text-slate-700"
+                  <button
+                    onClick={() => setSpeechEnabled((enabled) => !enabled)}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/15"
+                    aria-pressed={speechEnabled}
                   >
-                    <CheckCircle2
-                      size={18}
-                      className="shrink-0 text-emerald-600"
-                    />
-                    {item}
-                  </div>
-                ))}
-                <div className="flex items-center gap-3 text-sm text-slate-500">
-                  <Clock size={18} className="shrink-0" />
-                  Text-to-speech playback and order lookup integration
+                    {speechEnabled ? (
+                      <Volume2 size={17} />
+                    ) : (
+                      <VolumeX size={17} />
+                    )}
+                    Voice {speechEnabled ? "On" : "Off"}
+                  </button>
                 </div>
               </div>
-            </section>
+
+              <div className="mx-auto flex h-44 w-44 items-center justify-center rounded-full border border-white/15 bg-white/5">
+                <div className="flex h-32 w-32 items-center justify-center rounded-full border border-white/20 bg-white/10">
+                  <div className="flex h-24 w-24 items-center justify-center rounded-full bg-emerald-800 shadow-inner">
+                    <Bot size={48} strokeWidth={1.4} />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Right column */}
-          <aside className="space-y-6">
-            {/* Orders */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <SectionHeading
-                icon={Package}
-                title="Test Orders"
-                subtitle="Reference data for testing"
-              />
-
-              <p className="mb-4 rounded-lg bg-sky-50 p-3 text-xs leading-5 text-sky-800">
-                Use these order IDs when testing. The order cards are
-                reference data; Aria is not yet connected to a
-                server-side order lookup tool.
-              </p>
-
-              <div className="space-y-4">
-                {ORDERS.map((order) => (
-                  <div
-                    key={order.id}
-                    className="rounded-xl border border-slate-200 p-4"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-sm font-bold text-emerald-800">
-                        {order.id}
-                      </span>
-                      <span
-                        className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${
-                          order.status === "Delivered"
-                            ? "bg-slate-100 text-slate-700"
-                            : order.status === "Processing"
-                              ? "bg-amber-50 text-amber-800"
-                              : "bg-sky-50 text-sky-800"
-                        }`}
-                      >
-                        {order.status}
-                      </span>
-                    </div>
-
-                    <p className="mt-3 text-sm font-semibold text-slate-900">
-                      {order.product}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Customer: {order.customer}
-                    </p>
-                    <p className="mt-2 text-lg font-bold text-slate-900">
-                      ₹{order.amount.toLocaleString("en-IN")}
-                    </p>
-
-                    <div className="mt-3 space-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500">
-                      <p>
-                        <span className="font-medium text-slate-700">
-                          Courier:
-                        </span>{" "}
-                        {order.courier}
-                      </p>
-                      <p>
-                        <span className="font-medium text-slate-700">
-                          Tracking:
-                        </span>{" "}
-                        {order.tracking}
-                      </p>
-                      <p>{order.delivery}</p>
-                    </div>
-
-                    <button
-                      onClick={() =>
-                        sendMessageToAria(
-                          `Please help me check order ${order.id}.`
-                        )
-                      }
-                      disabled={busy}
-                      className="mt-3 w-full rounded-lg border border-emerald-200 px-3 py-2 text-xs font-semibold text-emerald-800 transition hover:bg-emerald-50 disabled:opacity-50"
-                    >
-                      Test with Aria
-                    </button>
-                  </div>
-                ))}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Activity size={16} />
+                Call status
               </div>
-            </section>
+              <p className="mt-2 font-semibold">{callActive ? "Active" : "Inactive"}</p>
+            </div>
 
-            {/* Policies */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <SectionHeading
-                icon={ShieldCheck}
-                title="Support Policies"
-                subtitle="Approved brand information"
-              />
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Headphones size={16} />
+                Assistant status
+              </div>
+              <p className="mt-2 flex items-center gap-2 font-semibold">
+                {(isSending || isTranscribing) && (
+                  <LoaderCircle size={16} className="animate-spin" />
+                )}
+                {statusLabel}
+              </p>
+            </div>
 
-              <div className="space-y-4">
-                {POLICIES.map((policy) => {
-                  const Icon = policy.icon;
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <CheckCircle2 size={16} />
+                Conversation
+              </div>
+              <p className="mt-2 font-semibold">
+                {conversation.length} messages
+              </p>
+            </div>
+          </div>
+
+          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-6">
+              <div>
+                <h3 className="font-semibold">Conversation with Aria</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  Speak using your microphone or type a message below.
+                </p>
+              </div>
+
+              <button
+                onClick={downloadTranscript}
+                disabled={conversation.length === 0}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Export JSON
+              </button>
+            </div>
+
+            <div className="flex min-h-[320px] max-h-[520px] flex-col gap-4 overflow-y-auto p-5 sm:p-6">
+              {conversation.length === 0 ? (
+                <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-800">
+                    <Bot size={28} />
+                  </div>
+                  <h4 className="mt-4 font-semibold">Your conversation starts here</h4>
+                  <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">
+                    Start a call, ask Aria about an order, or type a question
+                    about Aura Skincare policies.
+                  </p>
+                </div>
+              ) : (
+                conversation.map((message) => {
+                  const isAssistant = message.role === "assistant";
 
                   return (
-                    <div key={policy.title} className="flex gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
-                        <Icon size={17} />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-semibold text-slate-800">
-                          {policy.title}
-                        </h3>
-                        <p className="mt-1 text-xs leading-5 text-slate-500">
-                          {policy.description}
+                    <div
+                      key={message.id}
+                      className={`flex items-start gap-3 ${
+                        isAssistant ? "justify-start" : "justify-end"
+                      }`}
+                    >
+                      {isAssistant && (
+                        <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-950 text-white">
+                          <Bot size={18} />
+                        </div>
+                      )}
+
+                      <div
+                        className={`max-w-[85%] rounded-2xl px-4 py-3 sm:max-w-[78%] ${
+                          isAssistant
+                            ? "rounded-tl-md bg-slate-100 text-slate-800"
+                            : "rounded-tr-md bg-emerald-950 text-white"
+                        }`}
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-4">
+                          <span className="text-xs font-semibold">
+                            {isAssistant ? "Aria" : "You"}
+                          </span>
+                          <span
+                            className={`text-[10px] ${
+                              isAssistant ? "text-slate-400" : "text-emerald-200"
+                            }`}
+                          >
+                            {message.time}
+                          </span>
+                        </div>
+
+                        <p className="whitespace-pre-wrap break-words text-sm leading-6">
+                          {message.text}
                         </p>
+
+                        {isAssistant && (
+                          <button
+                            type="button"
+                            onClick={() => speakResponse(message.text)}
+                            className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-800 hover:underline"
+                          >
+                            <Volume2 size={13} />
+                            Play reply
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
-                })}
+                })
+              )}
+
+              <div ref={conversationEndRef} />
+            </div>
+
+            {recordingError && (
+              <div
+                role="alert"
+                className="mx-5 mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:mx-6"
+              >
+                {recordingError}
               </div>
-            </section>
+            )}
 
-            {/* Technical details */}
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-              <SectionHeading
-                icon={Volume2}
-                title="Agent Information"
-                subtitle="Current configuration"
-              />
-
-              <div className="space-y-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-slate-500">AI model</span>
-                  <span className="font-medium text-slate-800">
-                    Llama 3.3 70B
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-slate-500">Speech recognition</span>
-                  <span className="font-medium text-slate-800">
-                    Whisper
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-slate-500">Voice playback</span>
-                  <span className="font-medium text-amber-700">
-                    Not connected
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-slate-500">Order lookup</span>
-                  <span className="font-medium text-amber-700">
-                    Not connected
-                  </span>
-                </div>
+            {transcriptText && (
+              <div className="mx-5 mb-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-600 sm:mx-6">
+                <span className="font-semibold text-slate-700">
+                  Last voice transcription:
+                </span>{" "}
+                {transcriptText}
               </div>
-            </section>
-          </aside>
-        </div>
+            )}
 
-        <footer className="mt-8 border-t border-slate-200 py-5 text-center text-xs text-slate-500">
-          Aura Skincare · AI Voice Customer Support Agent
-        </footer>
+            <div className="border-t border-slate-100 p-4 sm:p-5">
+              <form onSubmit={handleManualSubmit} className="flex gap-2">
+                <input
+                  value={manualMessage}
+                  onChange={(event) => setManualMessage(event.target.value)}
+                  placeholder="Ask about an order or policy..."
+                  maxLength={2000}
+                  disabled={isSending}
+                  className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-50"
+                />
+                <button
+                  type="submit"
+                  disabled={!manualMessage.trim() || isSending}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="Send message"
+                >
+                  {isSending ? (
+                    <LoaderCircle size={18} className="animate-spin" />
+                  ) : (
+                    <Send size={18} />
+                  )}
+                  <span className="hidden sm:inline">Send</span>
+                </button>
+              </form>
+
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-slate-500">
+                  Voice input uses microphone access and audio transcription.
+                </p>
+
+                {!isRecording ? (
+                  <button
+                    type="button"
+                    onClick={startRecording}
+                    disabled={!callActive || isTranscribing || isSending}
+                    className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isTranscribing ? (
+                      <LoaderCircle size={17} className="animate-spin" />
+                    ) : (
+                      <Mic size={17} />
+                    )}
+                    {isTranscribing ? "Transcribing..." : "Speak"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={stopRecording}
+                    className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700"
+                  >
+                    <MicOff size={17} />
+                    Stop recording
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold">Aura Skincare policies</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Information Aria uses when answering support questions.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {POLICIES.map((policy) => {
+                const Icon = policy.icon;
+
+                return (
+                  <div
+                    key={policy.title}
+                    className="rounded-2xl border border-slate-200 bg-white p-4"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-900">
+                        <Icon size={19} />
+                      </div>
+                      <h4 className="font-semibold">{policy.title}</h4>
+                    </div>
+                    <p className="mt-3 text-sm leading-6 text-slate-600">
+                      {policy.description}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </section>
+
+        <aside className="space-y-6">
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold">Test order lookup</h3>
+                <p className="mt-1 text-sm leading-5 text-slate-500">
+                  Use these IDs to test Aria&apos;s order lookup.
+                </p>
+              </div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-900">
+                <Package size={20} />
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {TEST_ORDERS.map((order) => (
+                <div
+                  key={order.id}
+                  className="rounded-2xl border border-slate-200 p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-mono text-sm font-bold">
+                      {order.id}
+                    </span>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset ${getStatusClasses(
+                        order.status
+                      )}`}
+                    >
+                      {order.status}
+                    </span>
+                  </div>
+
+                  <p className="mt-3 text-sm font-semibold">{order.product}</p>
+                  <div className="mt-2 space-y-1 text-xs leading-5 text-slate-500">
+                    <p>{order.customer}</p>
+                    <p>Amount: {order.amount}</p>
+                    <p>{order.tracking}</p>
+                    <p>{order.delivery}</p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!callActive) startCall();
+                      sendMessageToAria(
+                        `Please check the order details and current status for ${order.id}.`
+                      );
+                    }}
+                    disabled={isSending}
+                    className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-40"
+                  >
+                    Ask Aria about this order
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-800">
+                <ShieldCheck size={20} />
+              </div>
+              <div>
+                <h3 className="font-semibold">Support guidelines</h3>
+                <p className="text-xs text-slate-500">How Aria should respond</p>
+              </div>
+            </div>
+
+            <ul className="mt-4 space-y-3 text-sm leading-5 text-slate-600">
+              <li className="flex gap-2">
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-700" />
+                Uses the order lookup tool for order-specific questions.
+              </li>
+              <li className="flex gap-2">
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-700" />
+                Asks for an order ID when it is missing.
+              </li>
+              <li className="flex gap-2">
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-700" />
+                Does not invent tracking details or promise actions it cannot perform.
+              </li>
+              <li className="flex gap-2">
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-700" />
+                Keeps replies friendly, relevant, and concise.
+              </li>
+            </ul>
+          </section>
+
+          <section className="rounded-3xl border border-emerald-100 bg-emerald-50 p-5">
+            <div className="flex items-center gap-2 text-emerald-950">
+              <Sparkles size={18} />
+              <h3 className="font-semibold">Try asking</h3>
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {[
+                "Where is my order ORD-101?",
+                "Can I cancel order ORD-103?",
+                "What is your return policy?",
+                "Do you offer cash on delivery?",
+              ].map((example) => (
+                <button
+                  key={example}
+                  type="button"
+                  onClick={() => {
+                    if (!callActive) startCall();
+                    sendMessageToAria(example);
+                  }}
+                  disabled={isSending}
+                  className="block w-full rounded-xl border border-emerald-100 bg-white px-3 py-2.5 text-left text-sm text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-100/50 disabled:opacity-40"
+                >
+                  {example}
+                </button>
+              ))}
+            </div>
+          </section>
+        </aside>
       </div>
+
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
+          <p>© {currentYear ?? ""} Aura Skincare · AI Voice Support Demo</p>
+          <p>Responses are generated from configured policies and mock order data.</p>
+        </div>
+      </footer>
     </main>
   );
 }

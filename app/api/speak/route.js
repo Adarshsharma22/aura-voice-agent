@@ -2,8 +2,6 @@
 import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 
-export const runtime = "nodejs";
-
 export async function POST(request) {
   try {
     if (!process.env.GROQ_API_KEY) {
