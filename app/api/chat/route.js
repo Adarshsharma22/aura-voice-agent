@@ -2,8 +2,6 @@
 import Groq from "groq-sdk";
 import { get_order_details } from "@/lib/orders";
 
-export const runtime = "nodejs";
-
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
