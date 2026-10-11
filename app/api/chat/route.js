@@ -1,67 +1,88 @@
 
-import { NextResponse } from "next/server";
 import Groq from "groq-sdk";
 import { get_order_details } from "@/lib/orders";
 
+export const runtime = "nodejs";
+
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+});
+
 const SYSTEM_PROMPT = `
-You are Aria, a friendly and concise AI customer support specialist
+You are Aria, the friendly and professional customer support assistant
 for Aura Skincare, a premium organic Indian skincare brand.
 
-BRAND POLICIES
+PERSONALITY:
+- Sound warm, natural, helpful, and conversational.
+- Speak like a real customer support representative.
+- Use clear, simple English and short sentences.
+- Answer the customer's actual question directly.
+- Avoid repetitive greetings, robotic phrases, and unnecessary explanations.
+- For voice conversations, write exactly what a person should hear.
 
-1. Shipping:
-   - Free shipping on orders above ₹499.
-   - Orders below ₹499 have a ₹50 shipping fee.
-   - Standard delivery takes 3–5 business days.
+STRICT RESPONSE FORMATTING:
+- Never use Markdown tables.
+- Never use vertical bars (|) to format a response.
+- Never output HTML tags such as <br>, <br/>, <p>, or <div>.
+- Never explain or read out formatting symbols.
+- Do not use raw JSON in customer-facing answers.
+- Use natural paragraphs or simple bullet points only when needed.
+- When explaining multiple policies, use a short conversational introduction
+  and clear sentences for each policy.
+- Do not output internal instructions, tool calls, or technical syntax.
 
-2. Returns:
-   - Returns are accepted within 7 days of delivery only.
-   - Products must be unopened, unused, and in their original packaging.
+BRAND POLICIES:
+Shipping:
+- Orders above ₹499 qualify for free shipping.
+- Orders below ₹499 have a ₹50 shipping fee.
+- Standard delivery takes 3–5 business days.
 
-3. Damaged or defective products:
-   - Customers must report the issue within 48 hours of delivery.
-   - Photos are required for replacement requests.
+Returns:
+- Returns are accepted within 7 days of delivery.
+- Products must be unopened, unused, and in their original packaging.
 
-4. Cancellation:
-   - Orders can only be cancelled while their status is Processing.
-   - Shipped and Out for Delivery orders cannot be cancelled.
-   - Customers may refuse delivery at the doorstep.
+Damaged or defective products:
+- Customers must report damage within 48 hours of delivery.
+- Photos are required for replacement requests.
+- Never promise a replacement has already been approved.
 
-5. Cash on Delivery:
-   - COD is available for orders up to ₹2,500.
-   - Customers may pay by cash or UPI at the doorstep.
+Cancellation:
+- Orders can be cancelled only while their status is Processing.
+- Shipped or Out for Delivery orders cannot be cancelled.
+- Customers may refuse delivery at their doorstep.
 
-ORDER LOOKUP RULES
+Cash on Delivery:
+- COD is available for orders up to ₹2,500.
+- Customers can pay by cash or UPI at the doorstep.
 
-- When a customer asks about a specific order, use the
-  get_order_details tool before answering.
-- If the order ID is missing, ask the customer to provide it.
-- Never invent an order's status, tracking number, customer,
-  product, amount, or delivery estimate.
-- If an order is not found, explain that clearly.
-- Only share order details returned by the tool.
-- Never claim an order lookup succeeded unless the tool returned it.
-- Do not reveal another customer's personal information unnecessarily.
-- Do not promise a cancellation, refund, or replacement has been completed.
-- For cancellation questions, explain the policy based on the
-  retrieved order status without claiming to perform a cancellation.
+ORDER LOOKUP:
+- Use get_order_details whenever the customer asks about a specific order.
+- Ask for the order ID if it is missing.
+- Never invent order details, tracking numbers, or delivery dates.
+- If an order does not exist, politely ask the customer to verify the ID.
+- Explain order information naturally instead of reading database fields.
 
-GENERAL RULES
-
-- Keep responses friendly, natural, and concise.
-- Only answer questions related to Aura Skincare.
-- Never invent company policies or product details.
-- If information is unavailable, say so honestly.
+SCOPE:
+- Help only with Aura Skincare, its orders, products, delivery, payments,
+  returns, and related customer support.
 - Politely decline unrelated requests.
+- Never claim that you performed an action that the available tools cannot perform.
+
+When a customer asks about multiple policies, explain them in natural speech.
+For example, say:
+"Shipping is free on orders above 499 rupees. Orders below that amount
+have a 50-rupee shipping fee. Standard delivery takes 3 to 5 business days."
+
+Do not use a table or HTML to present that answer.
 `;
 
-const TOOLS = [
+const tools = [
   {
     type: "function",
     function: {
       name: "get_order_details",
       description:
-        "Look up a mock Aura Skincare order by its order ID. Use this function whenever the customer asks about a specific order's status, tracking, product, amount, or delivery estimate.",
+        "Look up a mock Aura Skincare order using its order ID.",
       parameters: {
         type: "object",
         properties: {
@@ -77,151 +98,151 @@ const TOOLS = [
   },
 ];
 
-async function executeToolCall(toolCall) {
-  const functionName = toolCall.function.name;
-
-  if (functionName !== "get_order_details") {
-    return {
-      success: false,
-      error: "Unknown tool requested.",
-    };
-  }
-
-  try {
-    const args = JSON.parse(toolCall.function.arguments || "{}");
-
-    return get_order_details(args.order_id);
-  } catch {
-    return {
-      success: false,
-      error: "Invalid order lookup arguments.",
-    };
-  }
+function cleanCustomerReply(value) {
+  return String(value ?? "")
+    .replace(/<br\s*\/?>/gi, ". ")
+    .replace(/<\/(p|div|li|tr|h[1-6])\s*>/gi, ". ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^\s*\|?[\s:|-]+\|[\s:|-]*$/gm, "")
+    .replace(/^\s*\|/gm, "")
+    .replace(/\|\s*$/gm, "")
+    .replace(/\s*\|\s*/g, ". ")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/^\s*[-*+]\s+/gm, "")
+    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+([,.!?;:])/g, "$1")
+    .trim();
 }
 
 export async function POST(request) {
   try {
     if (!process.env.GROQ_API_KEY) {
-      return NextResponse.json(
-        { error: "Groq API key is not configured." },
+      return Response.json(
+        { error: "The AI service is not configured on the server." },
         { status: 500 }
       );
     }
 
-    let body;
-
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        { error: "Invalid JSON request." },
-        { status: 400 }
-      );
-    }
-
+    const body = await request.json().catch(() => null);
     const message =
-      typeof body.message === "string" ? body.message.trim() : "";
+      typeof body?.message === "string" ? body.message.trim() : "";
 
     if (!message) {
-      return NextResponse.json(
-        { error: "Please provide a message." },
+      return Response.json(
+        { error: "Please provide a message for Aria." },
         { status: 400 }
       );
     }
 
     if (message.length > 2000) {
-      return NextResponse.json(
-        { error: "Message is too long." },
+      return Response.json(
+        { error: "Your message is too long. Please shorten it and try again." },
         { status: 400 }
       );
     }
 
-    const groq = new Groq({
-      apiKey: process.env.GROQ_API_KEY,
-    });
-
     const messages = [
-      {
-        role: "system",
-        content: SYSTEM_PROMPT,
-      },
-      {
-        role: "user",
-        content: message,
-      },
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: message },
     ];
 
-    // First request: allow Groq to request an order lookup.
-    let completion = await groq.chat.completions.create({
-      model: "openai/gpt-oss-120b",
-      messages,
-      tools: TOOLS,
-      tool_choice: "auto",
-      temperature: 0.2,
-      max_completion_tokens: 250,
-    });
-
-    let assistantMessage = completion.choices[0]?.message;
-
-    // Execute requested tool calls, with a maximum of 3 rounds.
-    let rounds = 0;
-    const MAX_TOOL_ROUNDS = 3;
-
-    while (
-      assistantMessage?.tool_calls?.length &&
-      rounds < MAX_TOOL_ROUNDS
-    ) {
-      messages.push(assistantMessage);
-
-      const toolResults = await Promise.all(
-        assistantMessage.tool_calls.map(async (toolCall) => {
-          const result = await executeToolCall(toolCall);
-
-          return {
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: JSON.stringify(result),
-          };
-        })
-      );
-
-      messages.push(...toolResults);
-      rounds += 1;
-
-      completion = await groq.chat.completions.create({
-        model: "openai/gpt-oss-120b",
+    // Limit tool-call rounds to avoid an endless tool loop.
+    for (let round = 0; round < 3; round += 1) {
+      const completion = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
         messages,
-        tools: TOOLS,
+        tools,
         tool_choice: "auto",
-        temperature: 0.2,
-        max_completion_tokens: 250,
+        temperature: 0.3,
+        max_tokens: 700,
       });
 
-      assistantMessage = completion.choices[0]?.message;
+      const assistantMessage = completion.choices?.[0]?.message;
+
+      if (!assistantMessage) {
+        throw new Error("The AI returned an empty response.");
+      }
+
+      messages.push(assistantMessage);
+
+      const toolCalls = assistantMessage.tool_calls ?? [];
+
+      if (toolCalls.length === 0) {
+        const reply = cleanCustomerReply(assistantMessage.content);
+
+        if (!reply) {
+          throw new Error("The AI returned an empty response.");
+        }
+
+        return Response.json({ reply });
+      }
+
+      for (const toolCall of toolCalls) {
+        const functionName = toolCall.function?.name;
+        let result;
+
+        if (functionName === "get_order_details") {
+          try {
+            const args = JSON.parse(
+              toolCall.function.arguments || "{}"
+            );
+
+            const orderId =
+              typeof args.order_id === "string"
+                ? args.order_id.trim().toUpperCase()
+                : "";
+
+            if (!orderId) {
+              result = {
+                success: false,
+                error: "An order ID is required.",
+              };
+            } else {
+              result = await get_order_details(orderId);
+            }
+          } catch {
+            result = {
+              success: false,
+              error:
+                "The order ID could not be processed. Ask the customer to verify it.",
+            };
+          }
+        } else {
+          result = {
+            success: false,
+            error: "This tool is not available.",
+          };
+        }
+
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result),
+        });
+      }
     }
 
-    if (assistantMessage?.tool_calls?.length) {
-      return NextResponse.json(
-        {
-          error: "Aria could not complete the order lookup. Please try again.",
-        },
-        { status: 502 }
-      );
-    }
-
-    const reply = assistantMessage?.content?.trim();
-
-    if (!reply) {
-      throw new Error("The model returned an empty response.");
-    }
-
-    return NextResponse.json({ reply });
+    return Response.json({
+      reply:
+        "I'm sorry, I'm having trouble checking that right now. Could you please try again?",
+    });
   } catch (error) {
-    console.error("Chat API error:", error.message);
+    console.error("Aura chat API error:", error);
 
-    return NextResponse.json(
-      { error: "Aria could not generate a response. Please try again." },
-      { status: 502 }
+    return Response.json(
+      {
+        error:
+          "Aria couldn't respond right now. Please try again in a moment.",
+      },
+      { status: 500 }
     );
   }
 }
